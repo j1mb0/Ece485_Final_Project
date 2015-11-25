@@ -1,0 +1,6 @@
+C:\Users\J1mb0\Documents\School\ECE485\Final Project\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\bin\Debug\ECE485_SatHub.exe.config
+C:\Users\J1mb0\Documents\School\ECE485\Final Project\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\obj\Debug\ECE485_SatHub.csprojResolveAssemblyReference.cache
+C:\Users\J1mb0\Documents\School\ECE485\Final Project\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\bin\Debug\ECE485_SatHub.exe
+C:\Users\J1mb0\Documents\School\ECE485\Final Project\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\bin\Debug\ECE485_SatHub.pdb
+C:\Users\J1mb0\Documents\School\ECE485\Final Project\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\obj\Debug\ECE485_SatHub.exe
+C:\Users\J1mb0\Documents\School\ECE485\Final Project\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\obj\Debug\ECE485_SatHub.pdb
