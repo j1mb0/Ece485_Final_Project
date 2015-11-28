@@ -18,13 +18,72 @@ namespace ECE485_SatHub
         private byte[,] _theMemory;
 
         // Internal States
-        private int _SpaceAvailable;
+        private int _spaceAvailable;
+        private Commands _curCmd;
 
         public Memory(int moduleSize, int numModules, int latency)
         {
             _theMemory = new byte[numModules, moduleSize];
-            _SpaceAvailable = numModules * moduleSize;
+            _spaceAvailable = numModules * moduleSize;
             _latecy = latency;
+            _curCmd = Commands.WAIT;
+        }
+
+        public bool ParseData(Buffer data)
+        {
+            bool success = false;
+
+            // Check if the data contains a command
+            Commands cmd = (Commands)data._data[0];
+            // If it does, we will need check the second byte for details
+            // We only care about it when it is a read or a write command
+            // so we can go ahead and assume the second byte will be this.
+            byte tag = data._data[1];
+
+            //if(Enum.IsDefined(typeof(Commands), cmd))
+            //{
+            //    switch (cmd)
+            //    {
+            //        case Commands.REQUEST:
+            //            // read cmd
+            //            // check if we have the tag. 
+            //            // start getting data from memory
+            //            // equivalent to read
+            //            _curCmd = cmd;
+            //            // TODO
+            //            break;
+            //        case Commands.SEND:
+            //            // start putting data into memory
+            //            // equivalent to write
+            //            _curCmd = cmd;
+            //            // TODO
+            //            break;
+            //        case Commands.WAIT:
+            //            // we are waiting for a data transfer to complete
+            //            if(_curCmd == Commands.SEND)
+            //            {
+            //                // Whatever?
+            //            }
+            //            else if(_curCmd == Commands.REQUEST)
+            //            {
+            //                // C
+            //            }
+            //            // or we need to write out memory.
+
+            //            // TODO
+            //            break;
+            //        case default:
+            //            // This should only be hit when the command is
+            //            // invalid or jobdone, neither of which we care about
+            //            break;
+            //    }
+            //}
+
+            
+            
+
+            return success;
+
         }
 
         // Allocates space in the memory module for the
