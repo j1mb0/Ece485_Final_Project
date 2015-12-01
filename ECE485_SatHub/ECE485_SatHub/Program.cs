@@ -61,60 +61,25 @@ namespace ECE485_SatHub
     enum Commands : byte { SEND, REQUEST, WAIT, JOBDONE, INVALID };
  
     enum PacketSizes { B128, B512, B1024, INVALID };
-    
-    // ASSUMPTION: Each device link and memory module gets one 16 bit buffer. These
-    // buffers can serve many purposes. Here is a rough list of the uses I can think of
-    // so far:
-    // 1. Data can be held inside as it is transfered in from the serial based links to devices. 
-    // 2. Each memory module can use it to hold data? For prefetching or holding data taken
-    //      off the data bus, or something else?
-    // 3. ???
-    // This might be an unnessecary thing to model. I noticed Chars in C# are 16 bits wide.
-    // That might do to transfer data back and forth.
-    // TODO
-    struct Buffer
+
+    struct MemoryManagerElement
     {
-        // The buffer is 16 bits, or two bytes. 
-        // Model the buffer size
-        const int BUFFER_WIDTH  = 16; // bits wides
-        // What actually goes in here is irrelevant.
-        // Except for our command byte and tag byte?
-        // ASSUMPTION: 
-        // All data transferred will be ascii characters. That means our commands 
-        // can be 1 byte followed by the tag information in the second byte. 
-        public byte[] _data; 
-
-        // I cannot get set and get to work with converting data types. 
-        // This might need to done differently.
-        // TODO
-        public void SetData(string data)
-        {
-            int byteSize = BUFFER_WIDTH / 8;
-            _data = new byte[byteSize];
-
-            for (int i = 0; i < byteSize; i++)
-            {
-                _data[i] = (byte)data[i];
-            }   
-
-        }
-
-        public byte[] GetData()
-        {
-            return _data;
-        }
-    }
-
-    // Struct for memory management directory
-    // Keeps the start address and end address
-    // Modelling 4 Bytes per DirectoryEntry
-    struct DirectoryEntry
-    {
-        //ushorts are 16 bits wide
-        public ushort startAddr;
-        public ushort endAddr;
-        // 
-        public bool allocated;
+        // Our Memory Managment Unit uses these Memory Managment Units
+        // to keep track of what tags are currently in memory
+        public int tag;
+        // what size they are
+        public int size;
+        // how recently they were used. Higher is older. 
+        public int lruValue;
+        // and if they currently reside in our local memory.
+        public bool citizen;
+        // also mark the time the memory is valid and complete in memory
+        public ulong tClkFinish;
+        // and for when we must stall a SEND device but 
+        // do not want to go to the data center when a request for its data
+        // arrives. 
+        public bool incoming;
+        
     }
     
     class Program
@@ -122,9 +87,10 @@ namespace ECE485_SatHub
         // **** ASSUMPTIONS AND PARAMETERS ****
         // We define the maximum number of devices that can linked to the hub.
         // This includes the satellite and mobile devices.
-        const int NUM_DEVICES = 4;
+        const int NUM_DEVICES = 8;
         // assign the satellite device id
-        const int SATELLITE_DEVICE_ID = 0;
+        const int SATELLITE_UPLINK_ID = 0;
+        const int SATELLITE_DOWNLINK_ID = 4;
         // assign depth of memory hierarchy
         // This is the number of levels to the memory
         // For example, a system that has M1, M2, M3 has 
@@ -147,11 +113,7 @@ namespace ECE485_SatHub
         const int M3_COST = 3;
         // Packet Size LUT
         static int[] PACKET_SIZE_LUT = { 128, 512, 1024, 0 };
-        // Mask for tag (bits 0-4 or 00001111 = 15)
-        const byte TAG_MASK = 15;
-        // Mask for packet size (bits 5-7 or 11100000 = 224)
-        const byte PACKET_SIZE_MASK = 224;
-        const int PACKET_SIZE_OFFSET = 5;
+
         // ASSUMPTION
         // We will never have more than 31 tags
         const int MAX_TAG_VALUE = 31;
@@ -167,272 +129,335 @@ namespace ECE485_SatHub
         // This will be the array that holds the different devices connected to the hub.
         // It will include all of the mobile devices as well as the satellite. 
         public static Device[] devices;
-        
-        // Holds all the different levels of memory in our hierarchy
-        public static Memory[] memories;
+        public static List<Event> _listOfEvents;
+        public static ulong tCurrentClock;
+        public static int numEvents;
 
-        // Memory Map breaks up memory into blocks
-        public static bool[] memoryMap;
+        // this will use the Tag as the index, and store the last time it was used. 
+        // It is used for the LRU policy. 
+        public static MemoryManagerElement[] memoryManagementUnit;
 
-        // The directory for managing data in memory
-        public static DirectoryEntry[] MemoryDirectory;
+        // Keep track of the allocated memory in bytes.
+        public static int allocatedMemory;
 
         static void Main(string[] args)
         {
             // PLAYGROUND
             // Test stuff here
-            Buffer test = new Buffer();
-            test.SetData("AB");
-            
+
+         
             // the components of the sat hub. 
             devices = new Device[NUM_DEVICES];
-            memories = new Memory[3];
-            MemoryDirectory = new DirectoryEntry[MAX_TAG_VALUE];
+            _listOfEvents = new List<Event>();
+
             // also let us calculate the maximum memory available
             // for each memory
-            int blockSize = 128;
             int m1MaxMemory = M1_MODULE_SIZE * M1_NUM_MODULES;
-            int m1StartBlock = 0;
-            int m1EndBlock = (m1MaxMemory / blockSize) - 1; 
             int m2MaxMemory = M2_MODULE_SIZE * M2_NUM_MODULES;
-            int m2StartBlock = m1EndBlock + 1;
-            int m2EndBlock = m2StartBlock + (m2MaxMemory / blockSize) - 1;
             int m3MaxMemory = M3_MODULE_SIZE * M3_NUM_MODULES;
-            int m3StartBlock = m2EndBlock + 1;
-            int m3EndBlock = m3StartBlock + (m3MaxMemory / blockSize) - 1;
             int maxTotalMemory = m1MaxMemory + m2MaxMemory + m3MaxMemory;
 
-            ulong tCurrentClock = 0;
+            tCurrentClock = 0;
+            allocatedMemory = 0;
 
             // instatiate components
             // If there are 4 devices, including the satellite, 
-            // the first element of the array (@ 0) is the satellite,
-            // and the rest are regular mobile devices. 
-            // We first instatiate the satellite. 
-            devices[SATELLITE_DEVICE_ID] = new Device(SATELLITE_DEVICE_ID, TransferRates.SATELLITE);
-            // Then the Device Links
+            // the first element of the array (@ 0) is the satellite uplink,
+            // and 1-3 are regular mobile device downlinks.
+            // Then 4 is the satellite downlink and 1-3 are mobile device uplinks.
+            // We first instatiate  Device Links 
+            // This way, the logic of our loop is kept cleaner.
             for(int i = 1; i < NUM_DEVICES; i++)
             {
                 devices[i] = new Device(i, TransferRates.MOBILE);
             }
-            // Instatiate M1
-            memories[0] = new Memory(M1_MODULE_SIZE, M1_NUM_MODULES, M1_LATENCY);
-            // Instatiate M2
-            memories[1] = new Memory(M2_MODULE_SIZE, M2_NUM_MODULES, M2_LATENCY);
-            // Instatiate M3
-            memories[2] = new Memory(M3_MODULE_SIZE, M3_NUM_MODULES, M3_LATENCY);
+            // Then the satelliteup and down links
+            devices[SATELLITE_UPLINK_ID] = new Device(SATELLITE_UPLINK_ID, TransferRates.SATELLITE);
+            devices[SATELLITE_DOWNLINK_ID] = new Device(SATELLITE_DOWNLINK_ID, TransferRates.SATELLITE);
 
-            // Assemble Memory map
-            // Block size is smallest packet size. We will use the literal 128 until we find a better way
-            // TODO
-            int memoryMapSize = maxTotalMemory / blockSize;
-            memoryMap = new bool[memoryMapSize];
-            // initialize memory map
-            for (int i = 0; i < memoryMapSize; i++)
-            {
-                memoryMap[i] = false;
-            }
-            
-
-            // Instatiate and initialize the Memory Directory
+            // initialize MMU
+            memoryManagementUnit = new MemoryManagerElement[MAX_TAG_VALUE];
             for(int i = 0; i < MAX_TAG_VALUE; i++)
             {
-                MemoryDirectory[i] = new DirectoryEntry();
-                MemoryDirectory[i].startAddr = 0;
-                MemoryDirectory[i].endAddr = 0;
-                MemoryDirectory[i].allocated = false;
-            }
+                memoryManagementUnit[i] = new MemoryManagerElement();
+                memoryManagementUnit[i].tag = i;
+                memoryManagementUnit[i].lruValue = 0;
+                memoryManagementUnit[i].size = 0;
+                memoryManagementUnit[i].citizen = false;
+                memoryManagementUnit[i].tClkFinish = 0;
+                memoryManagementUnit[i].incoming = false;
 
+            }
 
             // Parse input CSV File
             // Have this be a command line argument in the future.
             string filePath = "final_project_traffic_1.csv";
             ParseTrafficFile(filePath);
 
-            Commands curCmd = Commands.WAIT;
-            byte curTag = 0;
-            PacketSizes curPackSize = PacketSizes.INVALID;
-            int curSendMx = 0;
-            int curRecieveMx = 0;
-            // Should this be modeled as hardware somehow?
-            // I am still not sure how this will be done.
-            // Maybe have a buffer for each link and memory?
-            // TODO
-            Buffer dataFromLink = new Buffer();
-            Buffer dataFromMemory = new Buffer();
-
-            // Keep track of what each current command is for each link
-            // since we can handle send and request simultaneously,
-            // make it two dimensional with 0 = SEND and 1 = REQUEST
-            Commands[,] latestCmds = new Commands[NUM_DEVICES,2];
-            byte[,] latestTags = new byte[NUM_DEVICES,2];
-            PacketSizes[,] latestPackSize = new PacketSizes[NUM_DEVICES,2];
-            int[,] latestAddr = new int[NUM_DEVICES, 2];
-
-            // Initialize the tracking elements
-            for(int i = 0; i < NUM_DEVICES; i++)
-            {
-                for (int j = 0; j < 2; j++)
-                {
-                    latestCmds[i,j] = new Commands();
-                    latestCmds[i,j] = Commands.WAIT;
-                    latestTags[i,j] = new byte();
-                    latestTags[i,j] = 0;
-                    latestPackSize[i,j] = new PacketSizes();
-                    latestPackSize[i,j] = PacketSizes.INVALID;
-                }
-            }
-
-
+            ulong clockCheck = 1;
+           // bool notFinished = true;
             // The loop that simulates each clock cycle. 
             // This condition needs some more development, must end sometime
             // TODO
-            while (true)
+            while (tCurrentClock < 1000000000)
             {
-                // Service the Satellite
-                // ?? We will need to add Events to the Satellite device somehow...
-                // TODO
-
-                for(int i = 1; i < NUM_DEVICES; i++)
+                //notFinished = false;
+                // this way of going through our list of events might be really expensive and slow...
+                foreach (Event aEvent in _listOfEvents.ToList())
                 {
-                    // Memory reap section
-                    // Check if the memory has any data ready for us for open transactions.
-                    // Calculate memory module
-
-                    Commands aCommand = Commands.SEND;
-                    int correspondingBlock = (int)Math.Floor((double)latestAddr[i, (int)aCommand] / blockSize );
-                    if (correspondingBlock > m1StartBlock && correspondingBlock < m1EndBlock)
+                    // assign the device id
+                    int deviceId = aEvent._deviceId;
+                    if(aEvent._operation == "REQUEST")
                     {
-
+                        deviceId += 4;
                     }
 
-                    dataFromLink = devices[i].Service(tCurrentClock);
-
-                    // extract command, tag, and packet size from the data
-                    // we will later check if it is a valid command or actual data
-                    // If there is a command in the data from the link
-                    // It will be in the first byte. We can check there 
-                    // for a command. If the data from link is simply ascii data,
-                    // it will not match any of our command bytes.
-                    curCmd = (Commands)dataFromLink._data[0];
-                    // bits 0 - 4 contain the tag (00001111 = 15)
-                    curTag = (byte)(dataFromLink._data[1] & TAG_MASK);
-                    // bit 5-7 contain the packet size
-                    curPackSize = (PacketSizes)((dataFromLink._data[1] & PACKET_SIZE_MASK) >> PACKET_SIZE_OFFSET);
-
-                    // if there is nothing from the device, continue to the next device
-                    // This state is represented by the WAIT command, signifiying that 
-                    // the device link is either idle or waiting for data.
-                    // Continues are not good yes? Can we rewrite this in a different way?
-                    // TODO
-                    if (curCmd == Commands.WAIT)
+                    if (deviceId == SATELLITE_UPLINK_ID)
                     {
-                        continue;
+                       //Console.WriteLine("I am a satellite uplink event");
                     }
 
-                    // On the first clk from a command we save the current command, tag and packet size
-                    if(curCmd == Commands.REQUEST || curCmd == Commands.SEND)
+                    // check if the event has started yet and not ended yet.
+                    if (tCurrentClock >= aEvent._tClockStart && aEvent._tClockEnd == 0)
                     {
-                        // we can use the enumeration value for the type of command
-                        // index. This is a nasty 'clever' bit of code. Sorry. 
-                        latestCmds[i, (int)curCmd] = curCmd;
-                        latestTags[i, (int)curCmd] = curTag;
-                        latestPackSize[i, (int)curCmd] = curPackSize;
+                        ulong additionalLatency = 0;
+                        //notFinished = true;
 
-                        int numBlocks = PACKET_SIZE_LUT[(int)curPackSize] / blockSize;
-                        
-                        
-                        // allocate the memory
-                        // This should technically take 1 clock cycle
-                        // TODO
-                        int block = 0;
-                        bool success = AllocateMemory(memoryMapSize, numBlocks, ref block);
-
-                        // if we could not successfully find a block
-                        // stall the device
-                        if (!success)
+                        if (devices[deviceId].linkOccupiedBy == -1 && HandleEvent(aEvent, maxTotalMemory, ref additionalLatency))
                         {
-                            devices[i].Stall(tCurrentClock);
-                            // start evicting stuff
+                            // see if the device link is available and if the hub can handle the request
+                            // assign the link to this event
+                            devices[deviceId].linkOccupiedBy = aEvent._eventId;
+                            // and calculate when the link will be finished. 
+                            ulong tClockEnd = tCurrentClock + additionalLatency + devices[deviceId].CalculateLatency(aEvent._transactionSize);
+                            aEvent._tClockEnd = tClockEnd;
+                            memoryManagementUnit[aEvent._trDataTags].tClkFinish = tClockEnd;
+                            memoryManagementUnit[aEvent._trDataTags].citizen = true;
+                            memoryManagementUnit[aEvent._trDataTags].size = aEvent._transactionSize;
+                            ReplacementPolicyUpdate(aEvent);
+                            PrintMsg("START ", aEvent);
                         }
                         else
                         {
-                            // allocation was successful, save the starting address in current address member
-                            latestAddr[i, (int)curCmd] = block * blockSize;
-
-                            // calculate relevant Mx
-
-
+                            // mark SEND data as incoming even though we cannot currently handle it
+                            if (aEvent._operation == "SEND")
+                            {
+                                memoryManagementUnit[aEvent._trDataTags].incoming = true;
+                            }
                         }
                     }
-
-                    
-
-                    // If the data does not contain a command, then it is pure data
-                    if(!Enum.IsDefined(typeof(Commands), curCmd))
+                    else if (tCurrentClock >= aEvent._tClockEnd && devices[deviceId].linkOccupiedBy == aEvent._eventId)
                     {
-                        // find out what we are doing with the data from the latest command information
-                        //lastCommand = latestCmds[
-                        
-                        // for a send, we calculate the address and then write it to memory
-                        // TODO this means we have to keep track of not only the latest command
-                        // but our progress in tranfering the latest command's data to memory.
-                        
-                        // for a request, we calculate the address (see read) and tell
-                        // the memory to give up the goods. After the latency, we will have to
-                        // reap the information from the memory. (See memory request reap section).
-
-                        // TODO What happens if we have a command and also must reap memory
-                        // at the same time. Obviously, we reap first and then issue the command
-                        // on the next clock cycle. The chance of this happening is really low. 
-                        // this is not currently reflected in the logic. FIX THIS
-                    }
-
-                    
-
-
+                        //notFinished = true;
+                        // the event has ended but is still occupying the link, 
+                        // unassign the device link from it.
+                        devices[deviceId].linkOccupiedBy = -1;
+                        // mark the memory.
+                        // if it was our satellite that finished
+                        if(deviceId == SATELLITE_UPLINK_ID)
+                        {
+                            // evict the memory
+                            allocatedMemory -= aEvent._transactionSize;
+                        }
+                        PrintMsg("Finished ", aEvent);
+                    } 
+                    // go head and register the data in the event as a resident citizen,
+                    // so that we do not go to the data center for it later on.
+                    // memoryManagementUnit[aEvent._trDataTags].citizen = true;
                 }
 
                 tCurrentClock++;
-            }
-            
-        }
-
-        private static bool AllocateMemory(int memoryMapSize, int numBlocks, ref int block)
-        {
-            bool success = false;
-
-            // now we find a spot in our memory
-            for (block = 0; block < memoryMapSize && !success; block++)
-            {
-                // check if unallocated
-                if (memoryMap[block] == false)
+                if(tCurrentClock == Math.Pow(10, clockCheck))
                 {
-                    // assume the necessary sequential blocks are also free 
-                    success = true;
-                    // actually check if sequential blocks are available
-                    for (int seqBlock = 1; seqBlock < numBlocks && success; seqBlock++)
-                    {
-                        // if it isn't free
-                        if (memoryMap[block + seqBlock] != false)
-                        {
-                            // the chunk of memory was not big enough
-                            success = false;
-                        }
-                    }
+                    Console.WriteLine("Current Clock at " + tCurrentClock);
+                    clockCheck++;
                 }
             }
+            WriteResultsFile(@"final_project_traffic_1_results.csv");
+            Console.WriteLine("FINISHED!!!!");
+        }
 
-            if (success) 
+        private static void ReplacementPolicyUpdate(Event aEvent)
+        {
+            // increase the lru value of all tags held in the MMU
+            for (int j = 0; j < MAX_TAG_VALUE; j++)
             {
-                // allocate the memory
-                for (int num = 0; num < numBlocks; num++)
+                if (memoryManagementUnit[j].citizen)
                 {
-                    memoryMap[block + num] = true;
+                    memoryManagementUnit[j].lruValue++;
+
+                }
+            }
+            // set the lru value of the tag we just hit to 0
+            memoryManagementUnit[aEvent._trDataTags].lruValue = 0;
+        }
+
+        private static void PrintMsg(string state, Event aEvent)
+        {
+            Console.WriteLine(state +  (aEvent._eventId + 1) + " at tClk " + tCurrentClock + 
+                " with plans to end at " + aEvent._tClockEnd);
+        }
+
+        private static bool HandleEvent(Event aEvent, int maxTotalMemory, ref ulong additionalLatency)
+        {
+            additionalLatency = 0;
+            bool success = false;
+
+            // if the event is a send
+            if (aEvent._operation == "SEND")
+            {
+                // check if we have available memory
+                if (maxTotalMemory - allocatedMemory >= aEvent._transactionSize)
+                {
+                    allocatedMemory += aEvent._transactionSize;
+                    success = true;
+                }
+                else if (devices[SATELLITE_UPLINK_ID].linkOccupiedBy == -1)
+                {
+                    // No room, but the sat uplink is available
+                    additionalLatency += Evict();
+                    success = true;
+                }
+                // memory is full, satellite uplink is unavailable, stall device
+                //PrintMsg("Stall SEND device, Mem full, sat busy ", aEvent);
+            } 
+            else
+            {
+            // if the event is a request
+            // check if the tag is in our memory
+                if(memoryManagementUnit[aEvent._trDataTags].citizen)
+                {
+                    // it is, we are successful
+                    if (memoryManagementUnit[aEvent._trDataTags].tClkFinish <= tCurrentClock)
+                    {
+                        success = true;
+                    }
+                } 
+                else if (devices[SATELLITE_DOWNLINK_ID].linkOccupiedBy == -1 && !memoryManagementUnit[aEvent._trDataTags].incoming)
+                {
+                    // If the data is not coming from a device later, we can get it from the data center
+                    // as well as if we have memory to recieve it
+                    if(maxTotalMemory - allocatedMemory >= aEvent._transactionSize)
+                    {
+                        // wonderful, we have space, we can first get it from the satellite. 
+                        additionalLatency += GetFromDataCenter(aEvent);
+                        success = true;
+                    }
+                    else if (devices[SATELLITE_UPLINK_ID].linkOccupiedBy == -1)
+                    {
+                        // ungh... this is where things get complicated.
+                        // We need to evict things to make room for what we want from the data center.
+                        // The uplink is free, so we can go ahead and do that.
+                        // Having this in here makes me think there is still a logically simplier way.
+                        additionalLatency += Evict();
+                        additionalLatency += GetFromDataCenter(aEvent);
+                        success = true;
+                    }
+                    // PrintMsg("Stall REQUEST device, Mem full, sat busy ", aEvent);
+                    // Both satellite links are busy. 
+                    // Memory is full.
+                    // Try again later. 
                 }
             }
             return success;
         }
+
+        private static ulong GetFromDataCenter(Event aEvent)
+        {
+            ulong additionalLatency = 0;
+
+            Event pullDown = new Event(
+                                        tCurrentClock,
+                                        "REQUEST",
+                                        SATELLITE_UPLINK_ID,            // because we add 4 to requests in the main loop
+                                        aEvent._transactionSize,
+                                        aEvent._trDataTags,
+                                        ++numEvents
+                                       );
+            _listOfEvents.Add(pullDown);
+            devices[SATELLITE_DOWNLINK_ID].linkOccupiedBy = numEvents;
+            additionalLatency = devices[SATELLITE_DOWNLINK_ID].CalculateLatency(aEvent._transactionSize);
+            pullDown._tClockEnd = tCurrentClock + additionalLatency;
+
+            return additionalLatency;
+        }
+
+        private static ulong Evict()
+        {
+            ulong additionalLatency;
+
+            // memory is full, satellite uplink is available, start evicting
+            int tagToEvict = FindOldestTag();
+            // start an event to transfer the memory out to the data center
+            // using the satellite hub
+            Event eviction = new Event(
+                                        tCurrentClock,
+                                        "SEND",
+                                        SATELLITE_UPLINK_ID,
+                                        memoryManagementUnit[tagToEvict].size,
+                                        tagToEvict,
+                                        ++numEvents
+                                       );
+            // once the eviction has started, the block is no longer valid.
+            // but we must wait until the eviction event is finished before 
+            memoryManagementUnit[tagToEvict].citizen = false;
+            memoryManagementUnit[tagToEvict].tClkFinish = 0;
+            _listOfEvents.Add(eviction);
+            devices[SATELLITE_UPLINK_ID].linkOccupiedBy = numEvents;
+            additionalLatency = devices[SATELLITE_UPLINK_ID].CalculateLatency(memoryManagementUnit[tagToEvict].size);
+            eviction._tClockEnd = tCurrentClock + additionalLatency;
+            PrintMsg("Eviction ", eviction);
+            return additionalLatency;
+        }
+
+        private static int FindOldestTag()
+        {
+            // find the oldest tag in memory
+            // for implementing LRU replacement policy.
+            // We should not have to account for the time it takes for this complete.
+            // I believe there is hardware support LRU policies that use triggered counters
+            // and compare registers. 
+            int oldest = -1;
+            for (int i = 0; i < MAX_TAG_VALUE; i++)
+            {
+                if (memoryManagementUnit[i].citizen)
+                {
+                    if (oldest == -1)
+                    {
+                        oldest = i;
+                    }
+                    if (memoryManagementUnit[i].lruValue > memoryManagementUnit[oldest].lruValue)
+                    {
+                        oldest = i;
+                    }
+                }
+            }
+
+            return oldest;
+        }
+
+        // Write the results file
+        private static void WriteResultsFile(string filePath)
+        {
+            using (System.IO.StreamWriter file = new System.IO.StreamWriter(filePath, true))
+            {
+                ulong latency;
+                file.WriteLine("time, device, operation, ts, tr_data_tag, time_end, latency");
+                foreach (Event aEvent in _listOfEvents)
+                {
+                    latency = aEvent._tClockEnd - aEvent._tClockStart;
+                    file.WriteLine(
+                        aEvent._tClockStart +
+                        ", " + aEvent._deviceId +
+                        ", " + aEvent._operation +
+                        ", " + aEvent._transactionSize +
+                        ", " + aEvent._trDataTags +
+                        ", " + aEvent._tClockEnd +
+                        ", " + latency);
+                }
+            }
+        }
+
 
         // Parses the traffic csv file, and initializes all of the
         // device events.
@@ -444,102 +469,25 @@ namespace ECE485_SatHub
             // Skip over header line.
             parser.ReadLine();
 
+            int i = 0;
             while (!parser.EndOfData)
             {
 
                 string[] fields = parser.ReadFields();
 
-                // Device id for the Event
-                int deviceId = int.Parse(fields[(int)FieldTypes.DEVICE]);
-
-                // Add the event to the corresponding device. 
-                devices[deviceId].AddEvent(
-                                            int.Parse(fields[(int)FieldTypes.TIME]),
+                // allocate the memory for the event and add it to the list. 
+                Event eventToAdd = new Event(
+                                            ulong.Parse(fields[(int)FieldTypes.TIME]),
                                             fields[(int)FieldTypes.OPERATION],
+                                            int.Parse(fields[(int)FieldTypes.DEVICE]),
                                             int.Parse(fields[(int)FieldTypes.TS]),
-                                            int.Parse(fields[(int)FieldTypes.TR_DATA_TAG])
-                                          );
+                                            int.Parse(fields[(int)FieldTypes.TR_DATA_TAG]),
+                                            i
+                                            );
+                _listOfEvents.Add(eventToAdd);
+                i++;
             }
+            numEvents = i;
         }
     }
 }
-
-
-/**
- * RUBBISH BIN
- * Before I send something off to delete land, I put it at the end of the file. This is my 'rubbish bin'. 
- * After I am sure that it is no longer needed (absolutely sure!) do I hit that delete key.
- * 
- *  // I am not sure how to model the atomic size of data we can transfer. 
-    // We know we have a bus width of 16 bits.
-    // So I imagine we should use the full bus to transfer the data. 
-    // But it may be that the bus width is the most important 
-    // detail, since that determines the smallest step possible in data transfer.
-    // There is actually no data being transfered, so what the data is is irrelevant.
-    // The data tag is important, but that should be stored in some sort of memory 
-    // management, and not the main memory itself. 
-    // TODO
-    struct AtomicTransfer
-    {
-        // For now, lets just model the two bytes required for a data transfer to memory.
-        // This atomic transfer can be modeled as the buffer? WAIT. MAYBE MODELING BUFFER IS BETTER.
-        // Or address bus? 
-        char[] data = new char[2];
-    }
- * 
- * 
- * //Commands 
-                    //foreach(Commands cmd in Enum.GetValues(typeof(Commands)))
-                    //{
-
-                    //}
-
-                    //switch (dataFromLink._data[0])
-                    //{
-                    //    case (byte)Commands.REQUEST:
-                    //        // start getting data from memory
-                    //        // TODO
-                    //        break;
-                    //    case (byte)Commands.SEND:
-                    //        // start putting data into memory
-                    //        // TODO
-                    //        break;
-                    //    case (byte)Commands.WAIT:
-                    //        // we are waiting for a data transfer to complete
-                    //        // TODO
-                    //        break;
-                    //    case (byte)Commands.JOBDONE:
-                    //        // This device has finished all events. 
-                    //        // When all are done we want to flip some switch that exits the loop
-                    //        break;
-                    //}
- * 
- *   // Then, some lengthy amount of clk after recieving a send/request cmd
-                    // , we will recieve the size of the packet.
-                    // We know this state because we will have saved a send/request but packetsize 
-                    // will be invalid.
-                    // TODO
-                    // Is there a way that we can fit command, tag, and packet size into 16 bits?
-                    bool recievedPacketSize = currentCmds[i] == Commands.SEND || currentCmds[i] == Commands.REQUEST;
-                    recievedPacketSize = recievedPacketSize && currentPackSize[i] == PacketSizes.INVALID;
-                    if (recievedPacketSize)
-                    {
-                        //currentPackSize[i] = (PacketSizes)dataFromLink[0];
-                    }
- * 
- * 
-                    //bool success = false;
-                    // If there is Data from the link, pass it to the memory
-                    //for (int memLevel = 0; memLevel < MEM_HIERARCHY_DEPTH && !success; memLevel++)
-                    //{
-                    //    // 
-                    //}
- * 
- *  //// Reap memory section
-                //for (int i = 0; i < MEM_HIERARCHY_DEPTH; i++)
-                //{
-                //    dataFromMemory = memories[i].Reap(tCurrentClock);
-
-                //    if(dataFromMemory == 
-                //}
-**/

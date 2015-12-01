@@ -10,20 +10,31 @@ namespace ECE485_SatHub
     class Event
     {   
         // time
-        private int _tClockStart;
+        public ulong _tClockStart;
         // operation
-        private string _operation;
+        public string _operation;
+        // device id
+        public int _deviceId;
         //ts
-        private int _transactionSize; 
+        public int _transactionSize; 
         // tr_data_tag
-        private int _trDataTags;
+        public int _trDataTags;
+        // time the event ended 
+        public ulong _tClockEnd;
+        // The id of the Event
+        public int _eventId;
+        
+        
 
-        public Event(int time, string operation, int tranSize, int trDataTag)
+        public Event(ulong time, string operation, int deviceId, int tranSize, int trDataTag, int eventId)
         {
             _tClockStart = time;
             _operation = operation;
+            _deviceId = deviceId;
             _transactionSize = tranSize;
             _trDataTags = trDataTag;
+            _tClockEnd = 0;
+            _eventId = eventId;
         }
     }
 }
