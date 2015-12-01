@@ -190,9 +190,16 @@ namespace ECE485_SatHub
             MemoryDirectory = new DirectoryEntry[MAX_TAG_VALUE];
             // also let us calculate the maximum memory available
             // for each memory
+            int blockSize = 128;
             int m1MaxMemory = M1_MODULE_SIZE * M1_NUM_MODULES;
+            int m1StartBlock = 0;
+            int m1EndBlock = (m1MaxMemory / blockSize) - 1; 
             int m2MaxMemory = M2_MODULE_SIZE * M2_NUM_MODULES;
+            int m2StartBlock = m1EndBlock + 1;
+            int m2EndBlock = m2StartBlock + (m2MaxMemory / blockSize) - 1;
             int m3MaxMemory = M3_MODULE_SIZE * M3_NUM_MODULES;
+            int m3StartBlock = m2EndBlock + 1;
+            int m3EndBlock = m3StartBlock + (m3MaxMemory / blockSize) - 1;
             int maxTotalMemory = m1MaxMemory + m2MaxMemory + m3MaxMemory;
 
             ulong tCurrentClock = 0;
@@ -218,7 +225,7 @@ namespace ECE485_SatHub
             // Assemble Memory map
             // Block size is smallest packet size. We will use the literal 128 until we find a better way
             // TODO
-            int memoryMapSize = maxTotalMemory / 128;
+            int memoryMapSize = maxTotalMemory / blockSize;
             memoryMap = new bool[memoryMapSize];
             // initialize memory map
             for (int i = 0; i < memoryMapSize; i++)
@@ -245,18 +252,22 @@ namespace ECE485_SatHub
             Commands curCmd = Commands.WAIT;
             byte curTag = 0;
             PacketSizes curPackSize = PacketSizes.INVALID;
+            int curSendMx = 0;
+            int curRecieveMx = 0;
             // Should this be modeled as hardware somehow?
             // I am still not sure how this will be done.
+            // Maybe have a buffer for each link and memory?
             // TODO
             Buffer dataFromLink = new Buffer();
+            Buffer dataFromMemory = new Buffer();
 
             // Keep track of what each current command is for each link
             // since we can handle send and request simultaneously,
             // make it two dimensional with 0 = SEND and 1 = REQUEST
-
             Commands[,] latestCmds = new Commands[NUM_DEVICES,2];
             byte[,] latestTags = new byte[NUM_DEVICES,2];
             PacketSizes[,] latestPackSize = new PacketSizes[NUM_DEVICES,2];
+            int[,] latestAddr = new int[NUM_DEVICES, 2];
 
             // Initialize the tracking elements
             for(int i = 0; i < NUM_DEVICES; i++)
@@ -278,17 +289,23 @@ namespace ECE485_SatHub
             // TODO
             while (true)
             {
-
-                // Reap memory section
-
-
-
                 // Service the Satellite
                 // ?? We will need to add Events to the Satellite device somehow...
                 // TODO
 
                 for(int i = 1; i < NUM_DEVICES; i++)
                 {
+                    // Memory reap section
+                    // Check if the memory has any data ready for us for open transactions.
+                    // Calculate memory module
+
+                    Commands aCommand = Commands.SEND;
+                    int correspondingBlock = (int)Math.Floor((double)latestAddr[i, (int)aCommand] / blockSize );
+                    if (correspondingBlock > m1StartBlock && correspondingBlock < m1EndBlock)
+                    {
+
+                    }
+
                     dataFromLink = devices[i].Service(tCurrentClock);
 
                     // extract command, tag, and packet size from the data
@@ -322,13 +339,14 @@ namespace ECE485_SatHub
                         latestTags[i, (int)curCmd] = curTag;
                         latestPackSize[i, (int)curCmd] = curPackSize;
 
-                        int numBlocks = PACKET_SIZE_LUT[(int)curPackSize] / 128;
+                        int numBlocks = PACKET_SIZE_LUT[(int)curPackSize] / blockSize;
                         
                         
                         // allocate the memory
                         // This should technically take 1 clock cycle
                         // TODO
-                        bool success = AllocateMemory(memoryMapSize, numBlocks);
+                        int block = 0;
+                        bool success = AllocateMemory(memoryMapSize, numBlocks, ref block);
 
                         // if we could not successfully find a block
                         // stall the device
@@ -337,10 +355,18 @@ namespace ECE485_SatHub
                             devices[i].Stall(tCurrentClock);
                             // start evicting stuff
                         }
+                        else
+                        {
+                            // allocation was successful, save the starting address in current address member
+                            latestAddr[i, (int)curCmd] = block * blockSize;
+
+                            // calculate relevant Mx
+
+
+                        }
                     }
 
-                    // Memory reap section
-                    // Check if the memory has any data ready for us.
+                    
 
                     // If the data does not contain a command, then it is pure data
                     if(!Enum.IsDefined(typeof(Commands), curCmd))
@@ -372,9 +398,8 @@ namespace ECE485_SatHub
             
         }
 
-        private static bool AllocateMemory(int memoryMapSize, int numBlocks)
+        private static bool AllocateMemory(int memoryMapSize, int numBlocks, ref int block)
         {
-            int block;
             bool success = false;
 
             // now we find a spot in our memory
@@ -398,7 +423,7 @@ namespace ECE485_SatHub
                 }
             }
 
-            if (success) ;
+            if (success) 
             {
                 // allocate the memory
                 for (int num = 0; num < numBlocks; num++)
@@ -509,4 +534,12 @@ namespace ECE485_SatHub
                     //{
                     //    // 
                     //}
+ * 
+ *  //// Reap memory section
+                //for (int i = 0; i < MEM_HIERARCHY_DEPTH; i++)
+                //{
+                //    dataFromMemory = memories[i].Reap(tCurrentClock);
+
+                //    if(dataFromMemory == 
+                //}
 **/

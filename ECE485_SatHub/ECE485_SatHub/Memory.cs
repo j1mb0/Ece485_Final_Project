@@ -17,9 +17,12 @@ namespace ECE485_SatHub
         // One is for the memory, the second is for module number.
         private byte[,] _theMemory;
 
-        // Internal States
+        // Internal Data Members
         private int _spaceAvailable;
         private Commands _curCmd;
+        // model the buffers for in and out data
+        Buffer _bufferIn;
+        Buffer _bufferOut;
 
         public Memory(int moduleSize, int numModules, int latency)
         {
@@ -27,6 +30,23 @@ namespace ECE485_SatHub
             _spaceAvailable = numModules * moduleSize;
             _latecy = latency;
             _curCmd = Commands.WAIT;
+        }
+
+        // TODO
+        // 
+        public Buffer Reap(ulong tCurClk)
+        {
+            // Placeholder
+            _bufferOut.SetData("FF");
+            return _bufferOut; 
+
+            // check each the current transaction to see if its latency period is up.
+
+            // if so, return data
+            
+            // if not, return "nothing"
+
+
         }
 
         public bool ParseData(Buffer data)
