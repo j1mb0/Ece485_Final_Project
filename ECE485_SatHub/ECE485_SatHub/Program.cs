@@ -98,17 +98,17 @@ namespace ECE485_SatHub
         const int MEM_HIERARCHY_DEPTH = 3;
         // M1 Properties
         const int M1_MODULE_SIZE = 256;
-        const int M1_NUM_MODULES = 2;
+        static int M1_NUM_MODULES = 2;
         const int M1_LATENCY = 1;
         const int M1_COST = 50;
         // M1 Properties
         const int M2_MODULE_SIZE = 512;
-        const int M2_NUM_MODULES = 4;
+        static int M2_NUM_MODULES = 4;
         const int M2_LATENCY = 8;
         const int M2_COST = 10;
         // M1 Properties
         const int M3_MODULE_SIZE = 1024;
-        const int M3_NUM_MODULES = 10;
+        static int M3_NUM_MODULES = 10;
         const int M3_LATENCY = 15;
         const int M3_COST = 3;
         // Packet Size LUT
@@ -132,6 +132,7 @@ namespace ECE485_SatHub
         public static List<Event> _listOfEvents;
         public static ulong tCurrentClock;
         public static int numEvents;
+        public static int completedEvents;
 
         // this will use the Tag as the index, and store the last time it was used. 
         // It is used for the LRU policy. 
@@ -142,13 +143,24 @@ namespace ECE485_SatHub
 
         static void Main(string[] args)
         {
-            // PLAYGROUND
-            // Test stuff here
+            string filePath = "final_project_traffic_1.csv";
+            
 
+            // get cmdline args
+            if(args.Length == 4)
+            {
+                filePath = args[0];
+                M1_NUM_MODULES = Convert.ToInt32(args[1]);
+                M2_NUM_MODULES = Convert.ToInt32(args[2]);
+                M3_NUM_MODULES = Convert.ToInt32(args[3]);
+            }
+
+            Console.WriteLine("For traffic file " + filePath + " and M1_NUM_MODULES = " + M1_NUM_MODULES + " M2 = " + M2_NUM_MODULES + " M3 " + M3_NUM_MODULES);
          
             // the components of the sat hub. 
             devices = new Device[NUM_DEVICES];
             _listOfEvents = new List<Event>();
+
 
             // also let us calculate the maximum memory available
             // for each memory
@@ -159,6 +171,7 @@ namespace ECE485_SatHub
 
             tCurrentClock = 0;
             allocatedMemory = 0;
+            completedEvents = 0;
 
             // instatiate components
             // If there are 4 devices, including the satellite, 
@@ -190,8 +203,6 @@ namespace ECE485_SatHub
             }
 
             // Parse input CSV File
-            // Have this be a command line argument in the future.
-            string filePath = "final_project_traffic_1.csv";
             ParseTrafficFile(filePath);
 
             ulong clockCheck = 1;
@@ -199,7 +210,7 @@ namespace ECE485_SatHub
             // The loop that simulates each clock cycle. 
             // This condition needs some more development, must end sometime
             // TODO
-            while (tCurrentClock < 2000000000)
+            while (completedEvents < numEvents)
             {
                 //notFinished = false;
                 // this way of going through our list of events might be really expensive and slow...
@@ -264,6 +275,7 @@ namespace ECE485_SatHub
                             allocatedMemory -= aEvent._transactionSize;
                         }
                         PrintMsg("Finished ", aEvent);
+                        completedEvents++;
                     } 
                     // go head and register the data in the event as a resident citizen,
                     // so that we do not go to the data center for it later on.
@@ -277,7 +289,7 @@ namespace ECE485_SatHub
                     clockCheck++;
                 }
             }
-            WriteResultsFile(@"final_project_traffic_1_results_fresh.csv");
+            WriteResultsFile("RESULTS_LRU_" + M1_NUM_MODULES + "_" + M2_NUM_MODULES + "_" + M3_NUM_MODULES + "_" + args[0]);
             Console.WriteLine("FINISHED!!!!");
         }
 
@@ -392,7 +404,7 @@ namespace ECE485_SatHub
             ulong additionalLatency;
 
             // memory is full, satellite uplink is available, start evicting
-            int tagToEvict = FindOldestTag();
+            int tagToEvict = FindYoungestTag();
             // start an event to transfer the memory out to the data center
             // using the satellite hub
             Event eviction = new Event(
@@ -415,30 +427,30 @@ namespace ECE485_SatHub
             return additionalLatency;
         }
 
-        private static int FindOldestTag()
+        private static int FindYoungestTag()
         {
             // find the oldest tag in memory
             // for implementing LRU replacement policy.
             // We should not have to account for the time it takes for this complete.
             // I believe there is hardware support LRU policies that use triggered counters
             // and compare registers. 
-            int oldest = -1;
+            int youngest = -1;
             for (int i = 0; i < MAX_TAG_VALUE; i++)
             {
                 if (memoryManagementUnit[i].citizen)
                 {
-                    if (oldest == -1)
+                    if (youngest == -1)
                     {
-                        oldest = i;
+                        youngest = i;
                     }
-                    if (memoryManagementUnit[i].lruValue > memoryManagementUnit[oldest].lruValue)
+                    if (memoryManagementUnit[i].lruValue < memoryManagementUnit[youngest].lruValue)
                     {
-                        oldest = i;
+                        youngest = i;
                     }
                 }
             }
 
-            return oldest;
+            return youngest;
         }
 
         // Write the results file

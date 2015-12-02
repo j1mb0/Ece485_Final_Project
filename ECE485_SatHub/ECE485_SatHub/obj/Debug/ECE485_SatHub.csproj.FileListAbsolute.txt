@@ -10,3 +10,9 @@ C:\Users\luna\Documents\ECE485\final project\Ece485_Final_Project\ECE485_SatHub\
 C:\Users\luna\Documents\ECE485\final project\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\obj\Debug\ECE485_SatHub.csprojResolveAssemblyReference.cache
 C:\Users\luna\Documents\ECE485\final project\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\bin\Debug\ECE485_SatHub.exe
 C:\Users\luna\Documents\ECE485\final project\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\bin\Debug\ECE485_SatHub.pdb
+C:\Users\luna\Documents\ECE485\screwmergin\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\bin\Debug\ECE485_SatHub.exe.config
+C:\Users\luna\Documents\ECE485\screwmergin\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\obj\Debug\ECE485_SatHub.exe
+C:\Users\luna\Documents\ECE485\screwmergin\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\obj\Debug\ECE485_SatHub.pdb
+C:\Users\luna\Documents\ECE485\screwmergin\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\bin\Debug\ECE485_SatHub.exe
+C:\Users\luna\Documents\ECE485\screwmergin\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\bin\Debug\ECE485_SatHub.pdb
+C:\Users\luna\Documents\ECE485\screwmergin\Ece485_Final_Project\ECE485_SatHub\ECE485_SatHub\obj\Debug\ECE485_SatHub.csprojResolveAssemblyReference.cache
