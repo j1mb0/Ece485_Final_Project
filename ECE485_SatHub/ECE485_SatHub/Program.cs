@@ -62,8 +62,17 @@ namespace ECE485_SatHub
  
     enum PacketSizes { B128, B512, B1024, INVALID };
 
+    // an enumeration for our different replacement policies
+    //enum ReplacementPolicies : string {LRU = "LRU", MRU = "MRU", SNOOP_QUEUE = "QUEUE"}; 
+
+    // What this does is model what each MMU keeps track of for each tag in memory.
+    // Really, the MMU should be it own class that has an interal array of these
+    // and AllocateMemory should be a function. TODO
     struct MemoryManagerElement
     {
+        // a static variable that keeps the size of the current unhandled request queue
+        static public int requestQueueSize;
+
         // Our Memory Managment Unit uses these Memory Managment Units
         // to keep track of what tags are currently in memory
         public int tag;
@@ -77,8 +86,11 @@ namespace ECE485_SatHub
         public ulong tClkFinish;
         // and for when we must stall a SEND device but 
         // do not want to go to the data center when a request for its data
-        // arrives. u
+        // arrives. 
         public bool incoming;
+        // if keep track of if and where the item is in the unhandled requests queue.
+        // 0 is not in the unhandled requests queue
+        public int requestQueuePos;
         
     }
     
@@ -122,6 +134,11 @@ namespace ECE485_SatHub
         const int SEND_INDEX = 0;
         const int REQUEST_INDEX = 1;
 
+        // REPLACEMENT POLICIES;
+        const string R_LRU = "LRU";
+        const string R_MRU = "MRU";
+        const string R_SNOOP_QUEUE = "QUEUE";
+
 
         // **** STATIC VARIABLES ****
         // This is a console program, so everything is static? *shrugs* makes sense I guess...
@@ -133,6 +150,8 @@ namespace ECE485_SatHub
         public static ulong tCurrentClock;
         public static int numEvents;
         public static int completedEvents;
+        public static string replacementPolicy;
+
 
         // this will use the Tag as the index, and store the last time it was used. 
         // It is used for the LRU policy. 
@@ -144,15 +163,17 @@ namespace ECE485_SatHub
         static void Main(string[] args)
         {
             string filePath = "final_project_traffic_1.csv";
-            
+            replacementPolicy = "LRU";
 
             // get cmdline args
-            if(args.Length == 4)
+            if(args.Length == 5)
             {
                 filePath = args[0];
-                M1_NUM_MODULES = Convert.ToInt32(args[1]);
-                M2_NUM_MODULES = Convert.ToInt32(args[2]);
-                M3_NUM_MODULES = Convert.ToInt32(args[3]);
+                replacementPolicy = args[1];
+                M1_NUM_MODULES = Convert.ToInt32(args[2]);
+                M2_NUM_MODULES = Convert.ToInt32(args[3]);
+                M3_NUM_MODULES = Convert.ToInt32(args[4]);
+               
             }
 
             Console.WriteLine("For traffic file " + filePath + " and M1_NUM_MODULES = " + M1_NUM_MODULES + " M2 = " + M2_NUM_MODULES + " M3 " + M3_NUM_MODULES);
@@ -201,6 +222,9 @@ namespace ECE485_SatHub
                 memoryManagementUnit[i].incoming = false;
 
             }
+            // initialize the MMU request queue size tracker 
+            // it is a static variable, so it we set it in the struct type for the element.
+            MemoryManagerElement.requestQueueSize = 0;
 
             // Parse input CSV File
             ParseTrafficFile(filePath);
@@ -231,6 +255,7 @@ namespace ECE485_SatHub
                     // check if the event has started yet and not ended yet.
                     if (tCurrentClock >= aEvent._tClockStart && aEvent._tClockEnd == 0)
                     {
+                        // ********** EVENT READY ************
                         // each new event probably interrupts a current event with the device in question
                         // so, we start off with an additional latency of 1 to account for this interrupt.
                         // No matter what, when that event eventually starts, the command will have to be 
@@ -238,31 +263,56 @@ namespace ECE485_SatHub
                         ulong additionalLatency = 1;
                         //notFinished = true;
 
-                        if (devices[deviceId].linkOccupiedBy == -1 && HandleEvent(aEvent, maxTotalMemory, ref additionalLatency))
+                        // If the device link is available and then if the hub can handle the request
+                        // The order of this actually is important and is a bit of C# exploit
+                        // Because if we enter the allocate memory method for a satellite device there will be bugs.
+                        // This is because satellite events are started in AllocateMemory to keep
+                        // the logic in this loop simplier. Entering allocatememory for a sat device would become circular.
+                        // The way the exploit works is that when a satellite event is started in Allocate memory
+                        // the corresponding satellite link is occupied by that event. Therefore, satellite events
+                        // will never pass the link unoccupied check. In C#, the precedence of boolean comparisons 
+                        // is left to right. If the leftmost of the && below fails, the right side is never evaulated.
+                        // Therefore the allocate memory will never be entered by an event owned by a satellite device.
+                        if (devices[deviceId].linkOccupiedBy == -1 && AllocateMemory(aEvent, maxTotalMemory, ref additionalLatency))
                         {
-                            // see if the device link is available and if the hub can handle the request
+                            /// ************ START EVENT *************
+                            // see if the 
                             // assign the link to this event
                             devices[deviceId].linkOccupiedBy = aEvent._eventId;
                             // and calculate when the link will be finished. 
                             ulong tClockEnd = tCurrentClock + additionalLatency + devices[deviceId].CalculateLatency(aEvent._transactionSize);
                             aEvent._tClockEnd = tClockEnd;
+                            // update our MMU
                             memoryManagementUnit[aEvent._trDataTags].tClkFinish = tClockEnd;
                             memoryManagementUnit[aEvent._trDataTags].citizen = true;
                             memoryManagementUnit[aEvent._trDataTags].size = aEvent._transactionSize;
+                            // update the replacement policy.
                             ReplacementPolicyUpdate(aEvent);
+
                             PrintMsg("START ", aEvent);
                         }
                         else
                         {
+                            // *************** UNABLE TO HANDLE ******************
+                            // we cannot handle currently handle the command from the device
+                            // however, if this is the first time that we have recieved the command
                             // mark SEND data as incoming even though we cannot currently handle it
-                            if (aEvent._operation == "SEND")
+                            if (aEvent._operation == "SEND" && !memoryManagementUnit[aEvent._trDataTags].incoming)
                             {
+                                memoryManagementUnit[aEvent._trDataTags].incoming = true;
+                            }
+                            else if (aEvent._operation == "REQUEST" && !memoryManagementUnit[aEvent._trDataTags].incoming)
+                            { 
+                                // it is a request
+                                // put it into the queue
+                                memoryManagementUnit[aEvent._trDataTags].requestQueuePos = ++MemoryManagerElement.requestQueueSize;
                                 memoryManagementUnit[aEvent._trDataTags].incoming = true;
                             }
                         }
                     }
                     else if (tCurrentClock >= aEvent._tClockEnd && devices[deviceId].linkOccupiedBy == aEvent._eventId)
                     {
+                        // ********** EVENT FINISHED **************
                         //notFinished = true;
                         // the event has ended but is still occupying the link, 
                         // unassign the device link from it.
@@ -274,6 +324,8 @@ namespace ECE485_SatHub
                             // evict the memory
                             allocatedMemory -= aEvent._transactionSize;
                         }
+                        // mark the data as no longer incoming
+                        memoryManagementUnit[aEvent._trDataTags].incoming = false;
                         PrintMsg("Finished ", aEvent);
                         completedEvents++;
                     } 
@@ -289,7 +341,14 @@ namespace ECE485_SatHub
                     clockCheck++;
                 }
             }
-            WriteResultsFile("RESULTS_LRU_" + M1_NUM_MODULES + "_" + M2_NUM_MODULES + "_" + M3_NUM_MODULES + "_" + args[0]);
+            WriteResultsFile(
+                            "RESULTS_" + 
+                            replacementPolicy + "_" + 
+                            M1_NUM_MODULES + "_" + 
+                            M2_NUM_MODULES + "_" + 
+                            M3_NUM_MODULES + "_" + 
+                            args[0]
+                            );
             Console.WriteLine("FINISHED!!!!");
         }
 
@@ -301,7 +360,6 @@ namespace ECE485_SatHub
                 if (memoryManagementUnit[j].citizen)
                 {
                     memoryManagementUnit[j].lruValue++;
-
                 }
             }
             // set the lru value of the tag we just hit to 0
@@ -314,9 +372,17 @@ namespace ECE485_SatHub
                 " with plans to end at " + aEvent._tClockEnd);
         }
 
-        private static bool HandleEvent(Event aEvent, int maxTotalMemory, ref ulong additionalLatency)
+        // ************* MEMORYALLOCATE **************
+        // Check if we can allocate memory for the queued transaction
+        // Returns true if we can, otherwise returns false
+        // Takes in additional latency by reference and will 
+        // add any additional latencies the allocation results in
+        // (for example, if we evict memory to make room, the latency of the 
+        // of the eviction process will be added to additionalLatency)
+        // 
+        private static bool AllocateMemory(Event aEvent, int maxTotalMemory, ref ulong additionalLatency)
         {
-            additionalLatency = 0;
+            //additionalLatency = 0;
             bool success = false;
 
             // if the event is a send
@@ -331,7 +397,7 @@ namespace ECE485_SatHub
                 else if (devices[SATELLITE_UPLINK_ID].linkOccupiedBy == -1)
                 {
                     // No room, but the sat uplink is available
-                    additionalLatency += Evict();
+                    additionalLatency += Evict(aEvent._transactionSize);
                     success = true;
                 }
                 // memory is full, satellite uplink is unavailable, stall device
@@ -363,21 +429,26 @@ namespace ECE485_SatHub
                     {
                         // ungh... this is where things get complicated.
                         // We need to evict things to make room for what we want from the data center.
-                        // The uplink is free, so we can go ahead and do that.
+                        // The uplink is free, so we can go ahead and do that, allowing us to request
+                        // the data from the satellite.
                         // Having this in here makes me think there is still a logically simplier way.
-                        additionalLatency += Evict();
+                        additionalLatency += Evict(aEvent._transactionSize);
                         additionalLatency += GetFromDataCenter(aEvent);
                         success = true;
                     }
                     // PrintMsg("Stall REQUEST device, Mem full, sat busy ", aEvent);
                     // Both satellite links are busy. 
                     // Memory is full.
-                    // Try again later. 
+                    // Stall initiating transfer
+                    // success is still false from initialzation.
+
                 }
             }
             return success;
         }
 
+        // ************** GET DATA FROM DATA CENTER ***************
+        // Starts a sat downlink event to grab a tag from the data center.
         private static ulong GetFromDataCenter(Event aEvent)
         {
             ulong additionalLatency = 0;
@@ -399,12 +470,13 @@ namespace ECE485_SatHub
             return additionalLatency;
         }
 
-        private static ulong Evict()
+        // ****************** EVICT A TAG FROM MEMORY *****************
+        private static ulong Evict(int ts)
         {
             ulong additionalLatency;
 
             // memory is full, satellite uplink is available, start evicting
-            int tagToEvict = FindYoungestTag();
+            int tagToEvict = ExecuteReplacementPolicy(ts);
             // start an event to transfer the memory out to the data center
             // using the satellite hub
             Event eviction = new Event(
@@ -427,7 +499,78 @@ namespace ECE485_SatHub
             return additionalLatency;
         }
 
-        private static int FindYoungestTag()
+        // ************** REPLACEMENT POLICY SWITCH *************
+        // Will exectue the chosen replacement policy.
+        private static int ExecuteReplacementPolicy(int ts)
+        {
+            if (replacementPolicy == R_LRU)
+            {
+                return FindOldestTag(ts);
+            }
+            else if (replacementPolicy == R_MRU)
+            {
+                return FindYoungestTag(ts);
+            }
+            else if (replacementPolicy == R_SNOOP_QUEUE)
+            {
+                return SnoopRequestQueue(ts);
+            }
+            else
+            {
+                // default to LRU
+                Console.Write("INVALID REPLACEMENT POLICY -- USING LRU");
+                return FindOldestTag(ts);
+            }
+        }
+
+        // Our unique Replacement for this specific setup.
+        // ASSUMPTION: We have recieved many commands we unable to process because the links are so slow.
+        // If we kept track of these commands, we can look at what unhandled requests reference tags
+        private static int SnoopRequestQueue(int ts)
+        {
+            // first grab the Least Recently Used tag
+            int tagToEvict = FindOldestTag(ts);
+            // check if that tag is in the request queue and is still incoming
+            if (memoryManagementUnit[tagToEvict].incoming = true && memoryManagementUnit[tagToEvict].requestQueuePos > 0)
+            {
+                // Do not evict that tag
+                tagToEvict = -1;
+                //  Instead, first search for a tag of equal size that is not in the request queue
+                for (int i = 0; i < MAX_TAG_VALUE; i++)
+                {
+                    // if we have the tag in memory, it is the right size, and is not the current request queue
+                    if (memoryManagementUnit[i].citizen && memoryManagementUnit[i].size >= ts && memoryManagementUnit[tagToEvict].requestQueuePos == 0)
+                    {
+                        // use it
+                        tagToEvict = i;
+                    }
+                }
+                // if we did not find anything, search for the oldest tag in the request queue
+                if (tagToEvict == -1)
+                {
+                    for (int i = 0; i < MAX_TAG_VALUE; i++)
+                    {
+                        // if we have the tag in memory, it is the right size, and is not the current request queue
+                        if (memoryManagementUnit[i].citizen && memoryManagementUnit[i].size >= ts)
+                        {
+                            // first valid canidate
+                            if (tagToEvict == -1)
+                            {
+                                tagToEvict = i;
+                            }
+                            if (memoryManagementUnit[i].requestQueuePos > memoryManagementUnit[tagToEvict].requestQueuePos)
+                            {
+                                tagToEvict = i;
+                            }
+                        }
+                    }
+                }
+               
+            }
+            return tagToEvict;
+        }
+
+        private static int FindYoungestTag(int ts)
         {
             // find the oldest tag in memory
             // for implementing LRU replacement policy.
@@ -437,8 +580,9 @@ namespace ECE485_SatHub
             int youngest = -1;
             for (int i = 0; i < MAX_TAG_VALUE; i++)
             {
-                if (memoryManagementUnit[i].citizen)
+                if (memoryManagementUnit[i].citizen && memoryManagementUnit[i].size >= ts)
                 {
+                    // first evict canidate
                     if (youngest == -1)
                     {
                         youngest = i;
@@ -451,6 +595,33 @@ namespace ECE485_SatHub
             }
 
             return youngest;
+        }
+
+        private static int FindOldestTag(int ts)
+        {
+            // find the oldest tag in memory
+            // for implementing LRU replacement policy.
+            // We should not have to account for the time it takes for this complete.
+            // I believe there is hardware support LRU policies that use triggered counters
+            // and compare registers. 
+            int oldest = -1;
+            for (int i = 0; i < MAX_TAG_VALUE; i++)
+            {
+                // if the tag resides in memory and is the same size
+                if (memoryManagementUnit[i].citizen && memoryManagementUnit[i].size >= ts)
+                {
+                    if (oldest == -1)
+                    {
+                        oldest = i;
+                    }
+                    if (memoryManagementUnit[i].lruValue > memoryManagementUnit[oldest].lruValue)
+                    {
+                        oldest = i;
+                    }
+                }
+            }
+
+            return oldest;
         }
 
         // Write the results file
