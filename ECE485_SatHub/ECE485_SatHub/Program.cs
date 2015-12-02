@@ -295,7 +295,7 @@ namespace ECE485_SatHub
             // set the lru value of the tag we just hit to 0
             memoryManagementUnit[aEvent._trDataTags].lruValue = 0;
         }
-
+		//Prints event info
         private static void PrintMsg(string state, Event aEvent)
         {
             Console.WriteLine(state +  (aEvent._eventId + 1) + " at tClk " + tCurrentClock + 
