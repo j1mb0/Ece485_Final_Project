@@ -77,7 +77,7 @@ namespace ECE485_SatHub
         public ulong tClkFinish;
         // and for when we must stall a SEND device but 
         // do not want to go to the data center when a request for its data
-        // arrives. 
+        // arrives. u
         public bool incoming;
         
     }
@@ -115,8 +115,8 @@ namespace ECE485_SatHub
         static int[] PACKET_SIZE_LUT = { 128, 512, 1024, 0 };
 
         // ASSUMPTION
-        // We will never have more than 31 tags
-        const int MAX_TAG_VALUE = 31;
+        // We will never have more than 32 tags
+        const int MAX_TAG_VALUE = 32;
         // Our memory managment arrays need to keep track of
         // both send and request commands 'simultaneously'
         const int SEND_INDEX = 0;
@@ -164,7 +164,7 @@ namespace ECE485_SatHub
             // If there are 4 devices, including the satellite, 
             // the first element of the array (@ 0) is the satellite uplink,
             // and 1-3 are regular mobile device downlinks.
-            // Then 4 is the satellite downlink and 1-3 are mobile device uplinks.
+            // Then 4 is the sategllite downlink and 5-7 are mobile device uplinks.
             // We first instatiate  Device Links 
             // This way, the logic of our loop is kept cleaner.
             for(int i = 1; i < NUM_DEVICES; i++)
@@ -199,7 +199,7 @@ namespace ECE485_SatHub
             // The loop that simulates each clock cycle. 
             // This condition needs some more development, must end sometime
             // TODO
-            while (tCurrentClock < 1000000000)
+            while (tCurrentClock < 2000000000)
             {
                 //notFinished = false;
                 // this way of going through our list of events might be really expensive and slow...
@@ -220,7 +220,11 @@ namespace ECE485_SatHub
                     // check if the event has started yet and not ended yet.
                     if (tCurrentClock >= aEvent._tClockStart && aEvent._tClockEnd == 0)
                     {
-                        ulong additionalLatency = 0;
+                        // each new event probably interrupts a current event with the device in question
+                        // so, we start off with an additional latency of 1 to account for this interrupt.
+                        // No matter what, when that event eventually starts, the command will have to be 
+                        // sent again, so it does not even out. 
+                        ulong additionalLatency = 1;
                         //notFinished = true;
 
                         if (devices[deviceId].linkOccupiedBy == -1 && HandleEvent(aEvent, maxTotalMemory, ref additionalLatency))
@@ -273,7 +277,7 @@ namespace ECE485_SatHub
                     clockCheck++;
                 }
             }
-            WriteResultsFile(@"final_project_traffic_1_results.csv");
+            WriteResultsFile(@"final_project_traffic_1_results_fresh.csv");
             Console.WriteLine("FINISHED!!!!");
         }
 
@@ -378,6 +382,7 @@ namespace ECE485_SatHub
             devices[SATELLITE_DOWNLINK_ID].linkOccupiedBy = numEvents;
             additionalLatency = devices[SATELLITE_DOWNLINK_ID].CalculateLatency(aEvent._transactionSize);
             pullDown._tClockEnd = tCurrentClock + additionalLatency;
+            PrintMsg("Pulling from Datacenter ", pullDown);
 
             return additionalLatency;
         }

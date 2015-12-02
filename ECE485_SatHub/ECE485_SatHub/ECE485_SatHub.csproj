@@ -44,7 +44,6 @@
   <ItemGroup>
     <Compile Include="Device.cs" />
     <Compile Include="Event.cs" />
-    <Compile Include="MemoryManagementUnit.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

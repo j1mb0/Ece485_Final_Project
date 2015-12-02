@@ -32,7 +32,7 @@ namespace ECE485_SatHub
             double latency = (ts * 8); 
             latency /= (double)_transferRate;
             latency *= Math.Pow(10, 8);
-            return Convert.ToUInt64(latency);
+            return Convert.ToUInt64(latency)  + 1;
         }
         
     }
