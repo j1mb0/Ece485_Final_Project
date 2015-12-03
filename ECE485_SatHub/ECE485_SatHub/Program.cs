@@ -163,7 +163,7 @@ namespace ECE485_SatHub
         static void Main(string[] args)
         {
             string filePath = "final_project_traffic_1.csv";
-            replacementPolicy = "LRU";
+            replacementPolicy = R_SNOOP_QUEUE;
 
             // get cmdline args
             if(args.Length == 5)
@@ -347,7 +347,7 @@ namespace ECE485_SatHub
                             M1_NUM_MODULES + "_" + 
                             M2_NUM_MODULES + "_" + 
                             M3_NUM_MODULES + "_" + 
-                            args[0]
+                            filePath
                             );
             Console.WriteLine("FINISHED!!!!");
         }
