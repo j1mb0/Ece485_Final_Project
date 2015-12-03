@@ -329,9 +329,6 @@ namespace ECE485_SatHub
                         PrintMsg("Finished ", aEvent);
                         completedEvents++;
                     } 
-                    // go head and register the data in the event as a resident citizen,
-                    // so that we do not go to the data center for it later on.
-                    // memoryManagementUnit[aEvent._trDataTags].citizen = true;
                 }
 
                 tCurrentClock++;
@@ -427,7 +424,7 @@ namespace ECE485_SatHub
                     }
                     else if (devices[SATELLITE_UPLINK_ID].linkOccupiedBy == -1)
                     {
-                        // ungh... this is where things get complicated.
+                        // ungh... this is where things get complicat
                         // We need to evict things to make room for what we want from the data center.
                         // The uplink is free, so we can go ahead and do that, allowing us to request
                         // the data from the satellite.
